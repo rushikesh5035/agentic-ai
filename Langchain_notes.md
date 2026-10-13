@@ -43,7 +43,7 @@ LangChain does not replace the language model. It provides the application layer
 
 ## 2. Problems Before LangChain
 
-Before using a framework, developers could call an LLM directly through a provider's SDK. That is sufficient for a small experiment:
+Before using a framework, \*developers could call an LLM directly through a provider's SDK. That is sufficient for a small experiment:
 
 ```python
 response = client.chat.completions.create(
@@ -1601,6 +1601,1050 @@ Inspect Content and Metadata
       ↓
 Embed and Index
 ```
+
+---
+
+---
+
+## 14. Embeddings
+
+### What Are Embeddings?
+
+An embedding model converts text into a fixed-length list of numbers called a vector. The vector represents the semantic meaning of the text.
+
+```text
+Text → Embedding Model → Vector of Numbers
+```
+
+Texts with similar meaning should have vectors that are close to each other. This allows applications to search by meaning instead of only matching exact words.
+
+### Example
+
+```python
+from langchain_openai import OpenAIEmbeddings
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
+
+query_vector = embeddings.embed_query("What is RAG?")
+
+document_vectors = embeddings.embed_documents([
+    "RAG retrieves context before generating an answer.",
+    "A vector store indexes numerical representations of text.",
+])
+```
+
+### Main Methods
+
+| Method                   | Purpose                         |
+| ------------------------ | ------------------------------- |
+| `embed_query(text)`      | Embed one user query            |
+| `embed_documents(texts)` | Embed a list of document chunks |
+
+### Embeddings in RAG
+
+```text
+Indexing time:
+Document Chunks → Document Embeddings → Vector Store
+
+Query time:
+User Query → Query Embedding → Similarity Search
+```
+
+The document and query embeddings should normally come from compatible embedding models. The embedding model is not the same as a chat model: it represents text numerically but does not generate an answer.
+
+### Similarity Metrics
+
+Common ways to compare vectors include `cosine similarity`, `Euclidean distance`, and `dot product`. The vector store usually handles this comparison.
+
+### Important Considerations
+
+- Higher dimensionality does not automatically mean better retrieval.
+- Embedding quality depends on the model, language, domain, and chunk quality.
+- Changing the embedding model usually requires re-embedding the documents.
+- Store the embedding-model name with an index so the index can be reproduced correctly.
+- Remove or protect sensitive data before sending it to an external embedding provider.
+
+---
+
+---
+
+## 15. Vector Stores
+
+### What Is a Vector Store?
+
+A vector store stores **document chunks**, their **embeddings**, and **metadata**. It provides efficient similarity search for a user query.
+
+```text
+Document Chunk + Embedding + Metadata → Vector Store
+
+User Query → Similarity Search → Relevant Documents
+```
+
+### Creating a Vector Store
+
+```python
+from langchain_community.vectorstores import FAISS
+
+vector_store = FAISS.from_documents(
+    documents=chunks,
+    embedding=embeddings,
+)
+```
+
+### Similarity Search
+
+```python
+results = vector_store.similarity_search(
+    "What is retrieval augmented generation?",
+    k=4,
+)
+
+for document in results:
+    print(document.page_content)
+```
+
+`k` controls how many documents are returned. A larger `k` gives more context but may also add irrelevant information and increase model cost.
+
+### FAISS and Chroma
+
+| Vector store             | Useful for                                                   |
+| ------------------------ | ------------------------------------------------------------ |
+| FAISS                    | Fast local similarity search and experiments                 |
+| Chroma                   | Local persistence, metadata, and development workflows       |
+| Managed vector databases | Production scale, availability, filtering, and shared access |
+
+### Vector Store vs Vector Database
+
+These terms are sometimes used interchangeably, but there is a useful practical distinction.
+
+#### Vector Store
+
+A vector store is usually a library or service focused mainly on storing embeddings and performing similarity search.
+
+Typical characteristics:
+
+- Lightweight and easy to use
+- Useful for experiments and smaller applications
+- May provide basic metadata filtering
+- May require the application to manage persistence, backups, scaling, and security
+- May not provide rich transactions, distributed clustering, or a full database query system
+
+**FAISS** is a good example. It provides fast local vector indexing and similarity search, while persistence and production infrastructure are handled separately by the application.
+
+#### Vector Database
+
+A vector database is a full database system designed to store and query vectors together with metadata.
+
+It may provide:
+
+- Distributed architecture and horizontal scaling
+- Durable persistence and replication
+- Backup and restore
+- Metadata schemas and filters
+- Authentication and authorization
+- Monitoring and operational tooling
+- High availability and access controls
+- Transactional or near-transactional guarantees, depending on the product
+
+Examples include **Milvus, Qdrant, and Weaviate**
+
+#### Which One Should We Choose?
+
+```text
+Learning / prototype / local experiment → FAISS or Chroma
+
+Production / large dataset / multiple users → Vector Database
+```
+
+The exact choice depends on dataset size, query volume, latency requirements, update frequency, filtering needs, security, availability, and operational budget.
+
+> A vector database can be viewed as a vector store with additional database capabilities such as durability, clustering, scaling, security, and advanced metadata management.
+
+### Metadata Filtering
+
+Metadata can store source, page number, document type, tenant, date, or permissions. Filtering prevents retrieval from returning documents outside the allowed scope.
+
+### Important Considerations
+
+- The index is only as good as the chunks and embeddings inserted into it.
+- Keep the original source and metadata with every chunk.
+- Plan how documents will be updated or deleted.
+- Use access-control filters for private or multi-tenant data.
+- Evaluate retrieval quality separately from answer quality.
+
+---
+
+---
+
+## 16. Retrievers
+
+### What Is a Retriever?
+
+A retriever accepts a query and returns the most relevant `Document` objects. It is the search component of a RAG application.
+
+`or`
+
+A retriever is a component in LangChain that fetches relevant documents from a
+data source in response to a user’s query.
+
+- There are multiple types of retrievers
+- All retrievers in LangChain are runnables
+
+```
+Data Source <------- Retriever ----------> Documents
+                        |
+                        |
+                        |
+                      Query
+```
+
+```python
+retriever = vector_store.as_retriever(
+    search_kwargs={"k": 4}
+)
+
+documents = retriever.invoke("What is RAG?")
+```
+
+### Retriever Types
+
+### 1. Basic Retriever
+
+Returns documents that are most similar to the query.
+
+```python
+retriever = vector_store.as_retriever(
+    search_type="similarity",
+    search_kwargs={"k": 3},
+)
+documents = retriever.invoke("What is RAG?")
+```
+
+Use this when a simple top-`k` similarity search is sufficient.
+
+### 2. Wikipedia Retriever
+
+Searches Wikipedia and returns relevant documents for general-knowledge questions.
+
+```python
+from langchain_community.retrievers import WikipediaRetriever
+
+retriever = WikipediaRetriever(load_max_docs=2)
+documents = retriever.invoke("Artificial Intelligence")
+```
+
+### 3. Vector-Store Retriever
+
+Uses an existing FAISS, Chroma, or other vector store as the retrieval backend.
+
+```python
+retriever = vector_store.as_retriever(search_kwargs={"k": 4})
+documents = retriever.invoke("Explain embeddings")
+```
+
+This is the most common retriever pattern in a basic RAG pipeline.
+
+### 4. Maximal Marginal Relevance (MMR)
+
+MMR is an information-retrieval algorithm designed to reduce redundancy while maintaining high relevance to the query.
+
+- Regular similarity search may return documents that are all very similar, repeat the same information, or lack diverse perspectives.
+
+- MMR selects the most relevant document first, then selects documents that are relevant but less similar to the documents already selected.
+
+```text
+Most relevant document → Relevant but different document → Another diverse result
+```
+
+MMR is especially useful in RAG when the context window should contain diverse but still relevant information.
+
+```python
+retriever = vector_store.as_retriever(
+    search_type="mmr",
+    search_kwargs={"k": 4, "fetch_k": 10},
+)
+```
+
+`fetch_k` creates a larger candidate set. MMR then chooses a diverse subset of `k` documents.
+
+### 5. Multi-Query Retriever
+
+Uses a model to generate multiple versions of the user's question, retrieves results for each version, and combines them. This helps when one wording does not match the wording in the documents.
+
+#### Why Use Multi-Query Retrieval?
+
+A single query may not capture all the ways an idea is expressed in the documents.
+
+```text
+Original query → Different query versions → Retrieve each → Combine and deduplicate
+```
+
+The steps are:
+
+1. Take the original query.
+2. Ask an LLM to generate semantically different versions.
+3. Retrieve documents for each version.
+4. Combine and deduplicate the results.
+
+This can improve recall, but it adds model calls, latency, and cost.
+
+```python
+from langchain.retrievers.multi_query import MultiQueryRetriever
+
+retriever = MultiQueryRetriever.from_llm(
+    retriever=vector_store.as_retriever(search_kwargs={"k": 3}),
+    llm=model,
+)
+documents = retriever.invoke("How does RAG improve answers?")
+```
+
+It can improve recall, but it adds model calls and latency.
+
+### 6. Contextual Compression Retriever
+
+First retrieves documents and then compresses them to keep only the parts relevant to the query. This can reduce unnecessary context sent to the model.
+
+#### Why Use Contextual Compression?
+
+A normal retriever may return an entire paragraph even when only one sentence answers the question.
+
+```text
+Base Retriever → Complete documents → Compressor → Relevant passages only
+```
+
+How it works:
+
+1. A base retriever fetches documents.
+2. A compressor examines each document.
+3. Only query-relevant content is kept.
+4. Irrelevant content is discarded.
+
+Use it for long documents or mixed-content chunks. The trade-off is an additional processing step, cost, and latency.
+
+```python
+from langchain.retrievers import ContextualCompressionRetriever
+from langchain.retrievers.document_compressors import LLMChainExtractor
+
+base = vector_store.as_retriever(search_kwargs={"k": 4})
+compressor = LLMChainExtractor.from_llm(model)
+
+retriever = ContextualCompressionRetriever(
+    base_retriever=base,
+    base_compressor=compressor,
+)
+documents = retriever.invoke("What is photosynthesis?")
+```
+
+Compression can reduce irrelevant context, but adds another model step, cost, and latency.
+
+### Other Important Retriever Types
+
+| Retriever                     | Simple explanation                                                         | Useful when                                                   |
+| ----------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `BM25Retriever`               | Keyword-based lexical search                                               | Exact words, IDs, and acronyms matter                         |
+| `ParentDocumentRetriever`     | Searches small child chunks but returns larger parent documents            | Search precision and full context are both needed             |
+| `TimeWeightedVectorRetriever` | Combines semantic similarity with recency                                  | Recent information should be preferred                        |
+| `SelfQueryRetriever`          | Converts a natural-language query into a search query and metadata filters | Users ask about dates, categories, or authors                 |
+| `MultiVectorRetriever`        | Uses multiple vectors or representations for one document                  | Documents have summaries, chunks, or multiple representations |
+| `EnsembleRetriever`           | Combines multiple retrievers                                               | Both keyword and semantic search are important                |
+| `ArxivRetriever`              | Retrieves research papers from ArXiv                                       | Research-paper search is required                             |
+
+#### Keyword Search Versus Semantic Search
+
+```text
+BM25 / keyword search → matches exact words and terms
+Vector search         → matches meaning and semantics
+Ensemble retrieval    → combines both strengths
+```
+
+For example, vector search may understand that “vehicle” and “car” are related, while BM25 may be better at finding an exact identifier such as `SKU-123`.
+
+### Retriever Selection Guide
+
+| Retriever              | Use when                                             |
+| ---------------------- | ---------------------------------------------------- |
+| Basic similarity       | You need a simple top-`k` search                     |
+| Wikipedia              | You need general Wikipedia knowledge                 |
+| Vector-store           | You are searching your own embedded documents        |
+| MMR                    | Results contain too many near-duplicates             |
+| Multi-query            | Different phrasings may retrieve different documents |
+| Contextual compression | Retrieved chunks contain too much irrelevant text    |
+
+### Retriever Quality Factors
+
+- Chunk size and overlap
+- Embedding model
+- Search type
+- Number of results (`k`)
+- Metadata filters
+- Query wording
+- Reranking or compression
+- Quality and freshness of the source data
+
+### Retriever Versus Vector Store
+
+```text
+Vector Store = stores and searches vectors
+
+Retriever    = application-facing interface that returns relevant documents
+```
+
+A vector store can become a retriever through `as_retriever()`, but retrievers can also use other search systems such as Wikipedia or databases.
+
+---
+
+---
+
+## 17. Retrieval-Augmented Generation (RAG)
+
+### What Is RAG?
+
+Retrieval-Augmented Generation is a pattern in which an application retrieves relevant external information and provides it to the language model before generating an answer.
+
+```text
+User Question
+      ↓
+Retriever
+      ↓
+Relevant Documents
+      ↓
+Prompt with Context
+      ↓
+Language Model
+      ↓
+Answer
+```
+
+### Why Use RAG?
+
+RAG helps an application answer questions using:
+
+- Private company documents
+- Current information
+- Large document collections
+- Domain-specific knowledge
+- Sources that can be cited or inspected
+
+RAG does not retrain the model. It supplies useful context at query time.
+
+### Complete RAG Flow
+
+RAG has two connected phases:
+
+1. **Indexing:** Prepare the external knowledge base before users ask questions.
+2. **Query-time RAG:** Retrieve useful information and generate an answer when a user asks a question.
+
+```text
+                INDEXING PHASE
+Documents → Load → Split → Embed → Store in Vector Database
+                                           │
+                                           ▼
+                QUERY-TIME PHASE
+User Query → Query Embedding → Retrieve Relevant Chunks
+                                      │
+                                      ▼
+                       Context + User Query
+                                      │
+                                      ▼
+                                  Prompt
+                                      │
+                                      ▼
+                                     LLM
+                                      │
+                                      ▼
+                                  Response
+```
+
+### Phase 1: Indexing
+
+Indexing is the process of preparing a knowledge base so it can be searched efficiently at query time.
+
+#### Step 1: Document Ingestion
+
+Load source knowledge into LangChain `Document` objects.
+
+Examples include PDFs, Word documents, YouTube transcripts, web pages, GitHub repositories, internal wikis, SQL records, and scraped webpages.
+
+```text
+Source Data → Document Loader → Documents with content and metadata
+```
+
+#### Step 2: Text Chunking
+
+Break large documents into small, meaningful chunks. Large documents may exceed the model context window, and smaller focused chunks usually improve semantic retrieval.
+
+```text
+Documents → Text Splitter → Document Chunks
+```
+
+Common tools include `RecursiveCharacterTextSplitter`, `MarkdownHeaderTextSplitter`, and structure-aware splitters.
+
+#### Step 3: Embedding Generation
+
+Convert every chunk into a dense numerical vector that captures its meaning.
+
+```text
+Document Chunk → Embedding Model → Vector
+```
+
+The same or compatible embedding model should be used for both document chunks and user queries.
+
+#### Step 4: Store Vectors and Metadata
+
+Store each vector together with its original chunk text and metadata in a vector store or vector database.
+
+```text
+Vector + Original Text + Metadata → Vector Store / Vector Database
+```
+
+Local options include FAISS and Chroma. Production options may include managed or distributed vector databases.
+
+### Phase 2: Query-Time RAG
+
+#### Step 1: Receive the Query
+
+The user asks a question in natural language.
+
+#### Step 2: Embed the Query
+
+The query is converted into a vector using the embedding model.
+
+```text
+User Query → Query Embedding Vector
+```
+
+#### Step 3: Retrieve Relevant Chunks
+
+The retriever searches the vector store and returns the most relevant chunks. It may use similarity search, MMR, multi-query retrieval, metadata filters, or compression.
+
+#### Step 4: Augment the Prompt
+
+The retrieved chunks are combined with the user's question to create an enriched prompt.
+
+```text
+Retrieved Context + User Question → Augmented Prompt
+```
+
+Example prompt:
+
+```text
+You are a helpful assistant.
+Answer the question only from the provided context.
+If the context is insufficient, say you do not know.
+
+Context:
+{context}
+
+Question:
+{question}
+```
+
+#### Step 5: Generate the Answer
+
+The LLM receives the augmented prompt and generates the final response using the user's question and retrieved context.
+
+```text
+Augmented Prompt → LLM → Grounded Response
+```
+
+### Why RAG Is Useful
+
+RAG allows an application to work with:
+
+- Private data
+- Recent developments and updated documents
+- Large external knowledge bases
+- Domain-specific information
+
+It can also reduce unsupported answers when the prompt instructs the model to rely only on retrieved context. However, retrieval quality must be evaluated because poor chunks or irrelevant results can still lead to hallucinations.
+
+### RAG Indexing Pipeline
+
+Indexing usually happens before the user asks a question:
+
+```text
+Load Documents
+      ↓
+Split Documents
+      ↓
+Create Embeddings
+      ↓
+Store Vectors and Metadata
+```
+
+### RAG Query Pipeline
+
+```text
+User Question
+      ↓
+Create Query Embedding
+      ↓
+Retrieve Relevant Chunks
+      ↓
+Build Prompt with Context
+      ↓
+Generate Answer
+```
+
+### Simple Retrieval Chain
+
+```python
+from langchain.chains import create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
+
+prompt = ChatPromptTemplate.from_template(
+    "Answer using only this context:\n{context}\n\nQuestion: {input}"
+)
+
+document_chain = create_stuff_documents_chain(model, prompt)
+retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+response = retrieval_chain.invoke({"input": "What is RAG?"})
+print(response["answer"])
+```
+
+### Common RAG Problems
+
+- Poor chunking produces incomplete context.
+- Poor embeddings return irrelevant documents.
+- A small `k` may miss important information.
+- A large `k` may overwhelm the model with noise.
+- Similar documents may be repeated without diversity methods such as MMR.
+- Stale indexes may return outdated information.
+- The model may still hallucinate when the retrieved context is insufficient.
+
+### RAG Best Practices
+
+1. Preserve source and page metadata.
+2. Test chunk sizes and overlap with real questions.
+3. Inspect retrieved documents before debugging the model prompt.
+4. Use metadata filtering for permissions and domains.
+5. Tell the model to say when the context does not contain an answer.
+6. Evaluate retrieval and generation as separate stages.
+7. Return citations or source information when trust is important.
+
+---
+
+## 18. Memory and Conversation History
+
+An LLM is stateless by default. Memory means that the application stores useful previous information and sends it again when needed.
+
+```text
+Previous Messages → Application Memory → New Prompt → Model
+```
+
+```python
+messages = [
+    ("system", "You are helpful."),
+    ("human", "My name is Ravi."),
+    ("ai", "Nice to meet you, Ravi."),
+    ("human", "What is my name?"),
+]
+response = model.invoke(messages)
+```
+
+### Short Memory Example
+
+```python
+from langchain_core.messages import HumanMessage, AIMessage
+
+history = [
+    HumanMessage(content="My favorite language is Python."),
+    AIMessage(content="I will remember that for this conversation."),
+]
+
+response = model.invoke(history + [
+    HumanMessage(content="What is my favorite language?")
+])
+
+print(response.content)
+```
+
+The application sends the previous messages again; the model does not remember them independently.
+
+For dynamic history, use `MessagesPlaceholder` in a `ChatPromptTemplate`. Memory can be short-term history, summarized history, long-term user data, or retrieved memories. Limit its size, isolate sessions, protect sensitive information, and allow deletion where appropriate.
+
+---
+
+## 19. Tools
+
+A tool is a Python function or external capability packaged so a model or agent can understand and call it.
+
+LLMs are good at reasoning and language generation, but they cannot automatically access live data, perform reliable calculations, call APIs, run code, or interact with databases. Tools connect these capabilities to the model.
+
+```text
+Model decides → Tool executes → Result returns to model
+```
+
+### 1. Built-In Tools
+
+Provided by LangChain or an integration package.
+
+```python
+from langchain_community.tools import DuckDuckGoSearchRun
+
+search = DuckDuckGoSearchRun()
+result = search.invoke("What is the capital of France?")
+```
+
+Other examples include Wikipedia, shell, Python, HTTP, and database tools. Review permissions before exposing powerful tools.
+
+### 2. Custom Tools
+
+Custom tools wrap application logic, APIs, calculations, or database operations.
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers."""
+    return a * b
+```
+
+The name, docstring, type hints, and parameters describe the tool to the model.
+
+### 3. Structured Tools
+
+Structured tools use an explicit schema for complex inputs, often with Pydantic.
+
+```python
+from pydantic import BaseModel
+from langchain_core.tools import StructuredTool
+
+class MultiplyInput(BaseModel):
+    a: int
+    b: int
+
+tool = StructuredTool.from_function(
+    func=lambda a, b: a * b,
+    name="multiply",
+    description="Multiply two numbers",
+    args_schema=MultiplyInput,
+)
+```
+
+### 4. Toolkits
+
+A toolkit is a group of related tools packaged for a common purpose, such as database, search, GitHub, or file-management tools.
+
+```python
+class MathToolkit:
+    def get_tools(self):
+        return [add, multiply]
+```
+
+Good tools have clear descriptions, typed inputs, validation, safe error handling, limited permissions, and concise results.
+
+### Ways to Create a Tool
+
+1. `@tool` decorator — the simplest approach for a typed Python function.
+2. `StructuredTool` — useful when an explicit Pydantic input schema is required.
+3. `BaseTool` — lower-level custom implementation for advanced behavior.
+
+`BaseTool` is the abstract base class behind common tool abstractions. It defines the structure and interface that a custom tool follows.
+
+### Tools in the Agent Ecosystem
+
+An agent is an LLM-powered system that can decide, use external tools, observe results, and continue toward a goal.
+
+```text
+User Goal → Agent Model → Tool → Observation → Agent Model → Final Answer
+```
+
+### Common Built-In Tool Examples
+
+| Tool                     | Purpose                                  |
+| ------------------------ | ---------------------------------------- |
+| `DuckDuckGoSearchRun`    | Web search                               |
+| `WikipediaQueryRun`      | Wikipedia lookup                         |
+| `PythonREPLTool`         | Run Python code                          |
+| `ShellTool`              | Run shell commands                       |
+| HTTP request tools       | Call web APIs                            |
+| Database query tools     | Query structured data                    |
+| Email or messaging tools | Send messages through connected services |
+
+### Custom Tools: When to Use Them
+
+Create a custom tool when the model needs to interact with your own API, business logic, database, product, or application.
+
+Workspace examples: `K_ Tools_in_LangChain/1_tools-in-langchain.ipynb` and `tool.md`.
+
+---
+
+## 20. Tool Calling
+
+Tool calling is when a model returns a structured request containing a tool name and arguments. The application or agent runtime executes the actual function.
+
+```text
+User Request → Model Tool Call → Application Executes Tool
+             → Tool Result → Model → Final Answer
+```
+
+### Define, Bind, and Execute
+
+```python
+@tool
+def multiply(a: int, b: int) -> int:
+    """Return the product of two numbers."""
+    return a * b
+
+model_with_tools = model.bind_tools([multiply])
+message = model_with_tools.invoke("What is 3 multiplied by 4?")
+
+tool_call = message.tool_calls[0]
+result = multiply.invoke(tool_call["args"])
+```
+
+Binding registers the tool's name, description, and input schema. The model suggests the call; the application executes it. In a complete loop, the result is sent back to the model for the final response.
+
+### What Does Tool Binding Provide?
+
+Tool binding tells the model:
+
+1. Which tools are available.
+2. What each tool does through its description.
+3. Which input format and arguments the tool expects through its schema.
+
+```text
+Tool Binding = Tool Name + Description + Input Schema
+```
+
+### Tool Calling Versus Tool Execution
+
+| Concept        | Responsibility                      |
+| -------------- | ----------------------------------- |
+| Tool binding   | Register tools with the model       |
+| Tool calling   | Model suggests a tool and arguments |
+| Tool execution | Application runs the function       |
+| Final response | Model explains the result           |
+
+### Tool Execution
+
+Tool execution is the step where the actual Python function or external API runs using the arguments suggested by the model.
+
+```text
+Model says: "Call multiply with a=8 and b=7."
+Application runs: multiply(a=8, b=7)
+Result: 56
+```
+
+The model suggests the action; LangChain or the application performs the action.
+
+The currency-conversion notebook demonstrates a multi-step call where one tool obtains an exchange rate and another performs the calculation.
+
+### Safety
+
+- Validate model-provided arguments.
+- Restrict shell, filesystem, database, and network permissions.
+- Add timeouts and error handling.
+- Require approval for sensitive actions.
+- Log tool calls and results.
+- Never expose secrets in tool descriptions or results.
+
+---
+
+## 21. Agents
+
+An agent is an LLM-powered application that decides which actions to take, uses tools, observes results, and continues until it can complete a task.
+
+```text
+User Goal → Model Decides → Tool Call → Tool Result → Model Decides Again → Answer
+```
+
+An ordinary chain follows a predefined sequence. An agent chooses its next step dynamically.
+
+| Chain                    | Agent                             |
+| ------------------------ | --------------------------------- |
+| Predetermined steps      | Dynamic steps                     |
+| More predictable         | More flexible                     |
+| Easier to test           | Requires stronger safety controls |
+| Good for fixed workflows | Good for tool-using tasks         |
+
+Agent components include a model, instructions, tools, memory/state, an execution loop, and a stop condition. Use an agent when the next action depends on the model's interpretation; use a chain when the steps are known in advance.
+
+---
+
+## 22. Callbacks and Observability
+
+Callbacks are hooks that run when events occur inside a LangChain workflow, such as model calls, chain steps, retrieval, tool calls, errors, and streaming.
+
+```text
+Workflow Event → Callback → Log / Trace / Metric / Action
+```
+
+Observability helps inspect prompts, model responses, retrieved documents, tool calls, token usage, latency, retries, and errors. Add session and request metadata, but avoid logging secrets or unnecessary personal data.
+
+---
+
+## 23. LangSmith
+
+LangSmith is used to trace, debug, evaluate, and monitor LangChain and other LLM applications.
+
+### Main Capabilities
+
+- **Tracing:** View the complete execution tree.
+- **Debugging:** Inspect prompts, retrieval, tools, outputs, and errors.
+- **Datasets:** Store representative inputs and expected results.
+- **Evaluation:** Compare application versions.
+- **Monitoring:** Track production quality, latency, failures, and usage.
+
+```python
+import os
+
+os.environ["LANGSMITH_API_KEY"] = "your-api-key"
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_PROJECT"] = "my-project"
+```
+
+### Evaluation Types
+
+- Unit tests for individual components
+- Offline evaluation on curated datasets
+- Regression tests after model or prompt changes
+- Backtesting against historical examples
+- Online monitoring and anomaly detection
+- LLM-as-a-judge evaluation
+- Deterministic code-based evaluation
+
+---
+
+## 24. LangServe and Deployment
+
+Deployment makes a LangChain workflow available through an API, application, background job, or hosted service.
+
+```text
+LangChain Workflow → API / App Server → Client
+```
+
+LangServe can expose LCEL chains and runnables as API endpoints:
+
+```python
+from fastapi import FastAPI
+from langserve import add_routes
+
+app = FastAPI(title="LangChain API")
+add_routes(app, chain, path="/chain")
+```
+
+Common options include Streamlit for learning UIs, FastAPI for custom APIs, LangServe for serving chains, containers for reproducibility, and LangGraph/LangSmith deployment for stateful agent workflows.
+
+### Deployment Checklist
+
+- Store keys in environment variables or a secrets manager.
+- Add authentication, validation, timeouts, retries, and rate limits.
+- Restrict dangerous tools.
+- Monitor latency, cost, errors, and quality.
+- Pin dependencies and test upgrades.
+
+The `1.1_openai`, `1.2 Ollama`, and `1.3_groq` examples contain application and serving patterns.
+
+---
+
+## 25. Testing, Evaluation, and Production Best Practices
+
+LLM output can vary even when code does not change. Test both software correctness and response quality.
+
+### Testing Layers
+
+1. **Unit tests:** Test schemas, formatting, routing, metadata filters, and tools.
+2. **Integration tests:** Test loaders, splitters, embeddings, vector stores, retrievers, models, and tools together.
+3. **Evaluation tests:** Test correctness, relevance, groundedness, format, safety, latency, and cost.
+4. **Regression tests:** Compare a new model, prompt, retriever, or chain with a known baseline.
+
+```python
+result = chain.invoke({"topic": "RAG"})
+assert isinstance(result, str)
+assert len(result) > 0
+```
+
+### Production Best Practices
+
+- Version prompts and schemas.
+- Validate tool arguments and model outputs.
+- Preserve source metadata for citations.
+- Use permission filters for private data.
+- Add timeouts, retries, fallbacks, and rate limits.
+- Track token usage, cost, latency, and errors.
+- Protect personal data, API keys, and system prompts.
+- Require human approval for high-impact actions.
+- Use traces and user feedback to improve evaluation datasets.
+
+### RAG Debugging Order
+
+```text
+Source quality → Chunk quality → Embedding quality
+      → Retrieval quality → Prompt grounding → Answer quality
+```
+
+Debug retrieval before assuming the model itself is the problem.
+
+---
+
+---
+
+## 26. Interview Questions and Final Cheat Sheet
+
+### Quick Interview Answers
+
+**What is LangChain?** An orchestration framework for building LLM applications with models, prompts, parsers, workflows, retrieval, tools, and agents.
+
+**What is LCEL?** LangChain Expression Language, commonly used to compose components with the pipe operator.
+
+**What is a Runnable?** A component with a common execution interface that can be composed with other components.
+
+**What is RAG?** Retrieval-Augmented Generation retrieves external context and provides it to a model before generation.
+
+**What is an embedding?** A numerical vector representation of text meaning used for similarity search.
+
+**What is a retriever?** A component that accepts a query and returns relevant `Document` objects.
+
+**What is MMR?** An algorithm that balances relevance and diversity to reduce duplicate retrieval results.
+
+**What is tool calling?** The model returns a structured request for a tool; the application executes it and returns the result.
+
+**What is an agent?** An LLM-powered system that dynamically chooses actions and tools to complete a task.
+
+**Why use LangSmith?** To trace, debug, evaluate, and monitor LLM applications.
+
+### Final Architecture Cheat Sheet
+
+```text
+User → Prompt / Messages → Chain, Runnable, or Agent
+                              ├── Model → Parser → Response
+                              ├── Retriever → Context → Model
+                              ├── Tool Call → Execution → Model
+                              └── Memory / State → Prompt Context
+
+Callbacks and LangSmith observe the workflow.
+```
+
+### Final RAG Cheat Sheet
+
+```text
+Load → Split → Embed → Store
+                         ↓
+Query → Embed → Retrieve → Augment Prompt → Generate
+```
+
+### Final Tool Cheat Sheet
+
+```text
+Create Tool → Bind Tool → Model Suggests Call
+            → Execute Tool → Return Result → Final Answer
+```
+
+### Revision Strategy
+
+For every LangChain topic, revise in this order:
+
+1. What problem does it solve?
+2. What is the main concept?
+3. What is the data flow?
+4. What is a small code example?
+5. What are the limitations and trade-offs?
+6. How is it used in a complete project?
 
 ---
 
