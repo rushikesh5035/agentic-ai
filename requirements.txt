@@ -29,3 +29,6 @@ uvicorn
 langserve
 sse_starlette
 scikit-learn
+requests
+langchainhub
+certifi
