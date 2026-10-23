@@ -32,3 +32,8 @@ scikit-learn
 requests
 langchainhub
 certifi
+tavily-python
+readability-lxml
+lxml
+rich
+trafilatura
